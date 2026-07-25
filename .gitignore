@@ -1,0 +1,12 @@
+# Python cache
+__pycache__/
+
+# Exclude all files under data/datasets except .gitkeep
+data/datasets/*
+!data/datasets/.gitkeep
+
+# Dataset archive
+data/datasets.tar
+
+# Experiment outputs
+exps/
