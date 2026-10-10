@@ -116,10 +116,19 @@ def basic_metrics(A, label, verbose=True):
         print(f"Num comp: {components}       ||| Pct wrong edges: {wrong_edge:.2f}")
     return nnz, fd_error, components, wrong_edge
 
-def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, normalize_embed=True, solver_type='lm', extra_dim=0, tol=0):
-    """ n_init is number of separate runs of kmeans to average over
-    computes average accuracy and nmi
+def spectral_clustering_predictions(A, nclass, n_init=10, normalize_embed=True,
+                                    solver_type='lm', extra_dim=0, tol=0,
+                                    random_state=0, kmeans_n_init=10):
+    """Return all partitions without consulting ground-truth labels.
+
+    n_init is the number of repeated K-means fits. kmeans_n_init is the
+    number of inertia-based restarts within each fit (no labels involved).
+    A local RNG makes evaluation reproducible without changing training RNGs.
     """
+    if n_init < 1 or kmeans_n_init < 1:
+        raise ValueError('K-means repeat and restart counts must be positive')
+    rng = np.random.RandomState(random_state)
+    v0 = rng.normal(size=A.shape[0])
     lap = scipy.sparse.csgraph.laplacian(A, normed=True)
     # nnz, fd_error, components, wrong_edge = basic_metrics(A, label, verbose=False)
     # if components > nclass:
@@ -128,32 +137,47 @@ def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10, norma
     #     tol = 1e-4
         
     if solver_type=='shift_invert':
-        vals, embedding = scipy.sparse.linalg.eigsh(lap, k=nclass+extra_dim, sigma=1e-6, which='LM', tol=tol)
+        vals, embedding = scipy.sparse.linalg.eigsh(lap, k=nclass+extra_dim, sigma=1e-6, which='LM', tol=tol, v0=v0)
     elif solver_type=='la':
         vals, embedding = scipy.sparse.linalg.eigsh(-lap, k=nclass+extra_dim,
-                                    sigma=None,  which='LA', tol=tol)
+                                    sigma=None,  which='LA', tol=tol, v0=v0)
     elif solver_type=='lm':
         vals, embedding = scipy.sparse.linalg.eigsh(
             2*scipy.sparse.identity(lap.shape[0])-lap,
-            k=nclass+extra_dim, sigma=None,  which='LM', tol=tol)
+            k=nclass+extra_dim, sigma=None,  which='LM', tol=tol, v0=v0)
     else:
         raise ValueError('invalid solver')
     
     if normalize_embed:
-        embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
-    cluster_model = sklearn.cluster.KMeans(n_clusters=nclass, n_init=n_init)
+        embedding = embedding / np.maximum(np.linalg.norm(embedding, axis=1, keepdims=True), 1e-12)
+    pred_lst = []
+    for _ in range(n_init):
+        cluster_model = sklearn.cluster.KMeans(
+            n_clusters=nclass, n_init=kmeans_n_init,
+            random_state=int(rng.randint(0, 2**31 - 1)))
+        pred_lst.append(cluster_model.fit_predict(embedding).copy())
+    return pred_lst
+
+
+def spectral_clustering_metrics(A, nclass, label, verbose=True, n_init=10,
+                                normalize_embed=True, solver_type='lm', extra_dim=0,
+                                tol=0, random_state=0, kmeans_n_init=10):
+    """Score the same label-independent partitions for ACC, NMI and ARI.
+
+    Return per-partition scores; callers should report their means and standard
+    deviations, never independently maximize metrics using ground-truth labels.
+    """
+    pred_lst = spectral_clustering_predictions(
+        A, nclass, n_init, normalize_embed, solver_type, extra_dim, tol,
+        random_state, kmeans_n_init)
     acc_lst = []
     nmi_lst = []
     ari_lst = []
-    pred_lst = []
-    for _ in range(n_init):
-        cluster_model.fit(embedding)
-        pred_label = cluster_model.labels_
+    for pred_label in pred_lst:
         acc = clustering_accuracy(label, pred_label)
         nmi_score = nmi(label, pred_label)
         acc_lst.append(acc)
         nmi_lst.append(nmi_score)
-        pred_lst.append(pred_label)
         ari_lst.append(adjusted_rand_score(label, pred_label))
         
     #conn_lst = connectivity_lst(A, label)

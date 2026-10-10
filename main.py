@@ -14,6 +14,7 @@ current_date = datetime.now()
 formatted_date = current_date.strftime('%m-%d')
 
 import argparse
+import json
 import torch
 import numpy as np
 import torch.optim as optim
@@ -60,8 +61,12 @@ parser.add_argument('--piiter', type=int, default=5,
                     help='hyper-parameter for Sinkhorn projection')
 parser.add_argument('--eps', type=float, default=0.1,
                     help='eps squared for total coding rate (default: 0.1)')
-parser.add_argument('--validate_every', type=int, default=10,
-                    help='validate to check the clustering performance')
+parser.add_argument('--validate_every', type=int, default=0,
+                    help='optional diagnostic test interval; 0 evaluates only the final epoch')
+parser.add_argument('--eval_seed', type=int, default=0,
+                    help='fixed random seed for label-independent spectral clustering')
+parser.add_argument('--eval_repeats', type=int, default=10,
+                    help='number of K-means fits to average, using the same partitions for all metrics')
 args = parser.parse_args()
 
 datasets_list = ['cifar-10','cifar-20','imagenet-10','imagenet-dogs','stl-10','dtd','ucf101']
@@ -148,10 +153,10 @@ with tqdm(total=args.epo) as progress_bar:
         progress_bar.update(1)
 
         ### evaluate on test set
-        if (epoch + 1) % args.validate_every == 0 or (epoch + 1) == args.epo:
-            print('EVAL on VALIDATION SET')
+        if (args.validate_every > 0 and (epoch + 1) % args.validate_every == 0) or (epoch + 1) == args.epo:
+            print('EVAL on TEST SET (final epoch is the reporting checkpoint)')
             model.eval()
-            with torch.no_grad():
+            with torch.random.fork_rng(), torch.no_grad():
                 z_list = []
                 
                 for step, x in enumerate(dataloader_test):
@@ -163,7 +168,30 @@ with tqdm(total=args.epo) as progress_bar:
                 z = torch.cat(z_list, dim=0)
                 self_coeff = (z @ z.T).abs()
 
-                acc_lst, nmi_lst, ari_lst, pred_lst = spectral_clustering_metrics(self_coeff.detach().cpu().numpy(),args.n_clusters, labels_test)
-                writer.add_scalar('ACC', np.max(acc_lst), global_step=epoch)
-                print('acc: {}, nmi: {}, ari: {}, epoch {}\n'.format(np.max(acc_lst), np.max(nmi_lst), np.max(ari_lst), epoch))
-                                                                                        
+                acc_lst, nmi_lst, ari_lst, pred_lst = spectral_clustering_metrics(
+                    self_coeff.detach().cpu().numpy(), args.n_clusters, labels_test,
+                    n_init=args.eval_repeats, random_state=args.eval_seed)
+                scores = {'ACC': acc_lst, 'NMI': nmi_lst, 'ARI': ari_lst}
+                summary = {name: {'mean': float(np.mean(values)),
+                                  'std': float(np.std(values, ddof=0))}
+                           for name, values in scores.items()}
+                for name, values in summary.items():
+                    writer.add_scalar(name + '/mean', values['mean'], global_step=epoch)
+                    writer.add_scalar(name + '/std', values['std'], global_step=epoch)
+                print('epoch {}: {}'.format(epoch + 1, summary))
+                np.savez_compressed(
+                    os.path.join(dir_name, 'evaluation_epoch_{}.npz'.format(epoch + 1)),
+                    labels=labels_test, predictions=np.stack(pred_lst), **scores)
+                if epoch + 1 == args.epo:
+                    torch.save({'model': model.state_dict(), 'args': vars(args),
+                                'epoch': epoch + 1},
+                               os.path.join(dir_name, 'checkpoints', 'final.pt'))
+                    with open(os.path.join(dir_name, 'evaluation_final.json'), 'w') as f:
+                        json.dump({'epoch': epoch + 1, 'training_seed': args.seed,
+                                   'evaluation_seed': args.eval_seed,
+                                   'evaluation_repeats': args.eval_repeats,
+                                   'kmeans_restarts_per_fit': 10,
+                                   'selection': 'predefined_final_epoch',
+                                   'std_ddof': 0, 'metrics': summary}, f, indent=2)
+
+writer.close()
