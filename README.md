@@ -39,6 +39,9 @@ these summaries are population standard deviations (`ddof=0`) across K-means fit
 For a multi-training-seed paper table, first average the K-means fits within each
 training seed, then report the mean and standard deviation across those seed means.
 Do not treat repeated K-means fits as independent network-training runs.
+The default output directory includes the training seed so different seeds do
+not overwrite one another. Use distinct `--desc` values for different settings
+or repeated jobs with the same seed.
 
 Earlier code printed independent label-based maxima of ACC, NMI and ARI. Those
 values can correspond to different partitions. This correction does not

@@ -73,7 +73,7 @@ datasets_list = ['cifar-10','cifar-20','imagenet-10','imagenet-dogs','stl-10','d
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 args.desc = '_'.join(
-    [formatted_date, args.data, 'gamma{}'.format(args.gamma), args.desc])
+    [formatted_date, args.data, 'gamma{}'.format(args.gamma), 'seed{}'.format(args.seed), args.desc])
 print(args)
 #################################################################################################################
 dir_name = os.path.join(f'exps/{args.desc}')
