@@ -69,7 +69,7 @@ parser.add_argument('--eval_repeats', type=int, default=10,
                     help='number of K-means fits to average, using the same partitions for all metrics')
 args = parser.parse_args()
 
-datasets_list = ['cifar-10','cifar-20','imagenet-10','imagenet-dogs','stl-10','dtd','ucf101']
+datasets_list = ['cifar-10','cifar-20','imagenet-10','imagenet-dogs','stl-10','dtd','ucf101','imagenet']
 assert args.data.lower() in datasets_list, "Only {} are supported".format(','.join(datasets_list))
 
 args.desc = '_'.join(
